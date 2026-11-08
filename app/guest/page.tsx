@@ -105,7 +105,7 @@ export default function Guest() {
         {tab === 'new' ? (
           <div className="mt-5 grid gap-4">
             <label className="grid gap-2 text-cream/80">Никнейм (2–24 символа)
-              <input className={input} value={nick} maxLength={24} onChange={(e) => setNick(e.target.value)} placeholder="Например, Ramazan" />
+              <input className={input} value={nick} maxLength={24} onChange={(e) => setNick(e.target.value)} placeholder="Например, Имя" />
             </label>
             <p className="text-sm text-cream/60">Никнейм это просто имя на экране. Регистрация по почте не нужна: профиль привязывается к устройству, а для другого устройства получишь код восстановления.</p>
             <button className="btn-primary disabled:opacity-40" disabled={busy || nick.trim().length < 2} onClick={create}>{busy ? 'Создаю…' : 'Войти'}</button>
