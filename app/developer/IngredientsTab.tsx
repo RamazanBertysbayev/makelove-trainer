@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { adminSb, dropMenuCache, errText } from '@/lib/adminClient';
 import { norm } from '@/lib/menu';
 
@@ -24,6 +24,7 @@ export default function IngredientsTab() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -54,17 +55,24 @@ export default function IngredientsTab() {
   }, [links]);
 
   async function run(fn: () => PromiseLike<{ error: unknown }>, okText: string, after?: () => void) {
-    setBusy(true); setMsg(null);
-    const { error } = await fn();
-    setBusy(false);
-    if (error) { setMsg({ ok: false, t: errText(error) }); return false; }
-    dropMenuCache(); await load(); after?.(); setMsg({ ok: true, t: okText });
-    return true;
+    if (busyRef.current) return false;
+    busyRef.current = true; setBusy(true); setMsg(null);
+    try {
+      const { error } = await fn();
+      if (error) { setMsg({ ok: false, t: errText(error) }); return false; }
+      dropMenuCache(); await load(); after?.(); setMsg({ ok: true, t: okText });
+      return true;
+    } catch (e) {
+      setMsg({ ok: false, t: errText(e) });
+      return false;
+    } finally {
+      busyRef.current = false; setBusy(false);
+    }
   }
 
   async function addNew() {
     const n = newName.trim().replace(/\s+/g, ' ');
-    if (!n) return;
+    if (!n || busyRef.current) return;
     await run(() => adminSb().from('ingredients').insert({ name: n, origin: 'admin' }), `Добавлен ингредиент «${n}».`, () => setNewName(''));
   }
 
@@ -85,7 +93,7 @@ export default function IngredientsTab() {
         <label className="flex min-h-[44px] items-center gap-2 text-sm"><input type="checkbox" checked={onlyUnused} onChange={(e) => setOnlyUnused(e.target.checked)} /> Только неиспользуемые</label>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <input className={field + ' max-w-sm'} placeholder="Новый ингредиент" value={newName} onChange={(e) => setNewName(e.target.value)} aria-label="Название нового ингредиента" onKeyDown={(e) => { if (e.key === 'Enter') addNew(); }} />
+        <input className={field + ' max-w-sm'} placeholder="Новый ингредиент" value={newName} onChange={(e) => setNewName(e.target.value)} aria-label="Название нового ингредиента" onKeyDown={(e) => { if (e.key === 'Enter' && !busy) void addNew(); }} />
         <button className={smallBtn + ' border-teal text-teal hover:bg-teal/10'} onClick={addNew} disabled={busy}>Добавить</button>
       </div>
       {msg && <p role="status" className={`mt-3 ${msg.ok ? 'text-teal' : 'text-pink'}`}>{msg.t}</p>}
