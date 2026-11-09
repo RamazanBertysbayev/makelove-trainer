@@ -22,6 +22,10 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
     return c.menu.ingredients.filter((i) => !picked.includes(i.id) && (!f || i.name.toLowerCase().replace(/ё/g, 'е').includes(f) || i.aliases.some((a) => a.toLowerCase().includes(f))));
   }, [c, picked, filter]);
 
+  function restart() {
+    if (res?.ok) return;
+    checkLock.current = false; setPicked([]); setFilter(''); setRes(null);
+  }
   function check() {
     if (checkLock.current || res) return;
     checkLock.current = true;
@@ -46,7 +50,7 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
         </ul>
         <div className="mt-4 flex flex-wrap gap-3">
           <button className="btn-ghost" disabled={!!res || !picked.length} onClick={() => setPicked((current) => current.slice(0, -1))}>Отменить последний</button>
-          <button className="btn-ghost" disabled={!!res || !picked.length} onClick={() => setPicked([])}>Начать заново</button>
+          <button className="btn-ghost" disabled={(!!res && res.ok) || (!res && !picked.length)} onClick={restart}>Начать заново</button>
           <button className="btn-primary disabled:opacity-40" disabled={!!res || !picked.length} onClick={check}>Проверить</button>
         </div>
       </section>
@@ -56,7 +60,6 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
           {res.missing.length > 0 && <p className="mt-2">Не хватает: <b>{res.missing.join(', ')}</b></p>}
           {res.extra.length > 0 && <p className="mt-2">Лишнее: <b>{res.extra.join(', ')}</b></p>}
           <p className="mt-2 text-cream/80">Правильный состав: {c.list(dish.ingredients)}</p>
-          {!res.ok && <button type="button" className="btn-primary mt-4" onClick={() => { checkLock.current = false; setPicked([]); setFilter(''); setRes(null); }}>Попробовать ещё раз</button>}
         </section>
       )}
       {!res && (
