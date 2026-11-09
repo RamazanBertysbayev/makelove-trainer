@@ -128,7 +128,7 @@ export default function Cards() {
   return (
     <main className="mx-auto max-w-xl px-5 pb-24">
       <p className="py-6 text-sm text-cream/70">Карточка {idx + 1} из {deck.length}</p>
-      <button type="button" onClick={() => setFlipped((current) => !current)} className="panel block min-h-[320px] w-full p-8 text-left" aria-label="Перевернуть карточку">
+      <button type="button" disabled={answering} onClick={() => setFlipped((current) => !current)} className="panel block min-h-[320px] w-full p-8 text-left" aria-label="Перевернуть карточку">
         {!flipped ? (
           <>
             <p className="text-xs font-semibold uppercase tracking-wide text-teal">{cats.get(dish.category_id)}</p>
@@ -149,7 +149,7 @@ export default function Cards() {
           <button className="btn-ghost px-2" disabled={answering} onClick={() => answer('review')}>Нужно повторить</button>
           <button className="btn-ghost px-2 !border-pink !text-pink" disabled={answering} onClick={() => answer('wrong')}>Не знаю</button>
         </div>
-      ) : <button className="btn-ghost mt-5 w-full" onClick={() => setFlipped(true)}>Показать состав</button>}
+      ) : <button className="btn-ghost mt-5 w-full" disabled={answering} onClick={() => setFlipped(true)}>Показать состав</button>}
       {warn && <p className="mt-4 text-sun">{warn}</p>}
     </main>
   );
