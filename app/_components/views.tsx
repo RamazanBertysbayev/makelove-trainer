@@ -184,7 +184,7 @@ export function CompareView({ task, c, onAnswer }: P<'compare'>) {
           <li key={r} className="panel p-3">
             <p className="font-semibold">{c.label(r)}{res !== null && <span className={ans[r] === task.truth[r] ? ' text-teal' : ' text-pink'}> {ans[r] === task.truth[r] ? '✓' : `✗ (${SIDES.find(([s]) => s === task.truth[r])![1]})`}</span>}</p>
             <div className="mt-2 grid grid-cols-3 gap-2">
-              {SIDES.map(([s, label]) => (<button key={s} type="button" disabled={res !== null} onClick={() => setAns({ ...ans, [r]: s })} className={`min-h-[44px] rounded-lg border-2 px-2 text-sm font-bold ${ans[r] === s ? 'border-pink bg-pink/20' : 'border-white/15 text-cream/80'}`}>{label}</button>))}
+              {SIDES.map(([s, label]) => (<button key={s} type="button" disabled={res !== null} onClick={() => setAns((current) => ({ ...current, [r]: s }))} className={`min-h-[44px] rounded-lg border-2 px-2 text-sm font-bold ${ans[r] === s ? 'border-pink bg-pink/20' : 'border-white/15 text-cream/80'}`}>{label}</button>))}
             </div>
           </li>
         ))}
