@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { adminSb, dropMenuCache, errText, PHOTO_BUCKET, photoUrl } from '@/lib/adminClient';
 import { norm } from '@/lib/menu';
 
@@ -25,6 +25,11 @@ export default function DishesTab() {
   const [cat, setCat] = useState('all');
   const [st, setSt] = useState('all');
   const [editId, setEditId] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createMsg, setCreateMsg] = useState('');
+  const createLock = useRef(false);
+  const deleteLock = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -56,6 +61,35 @@ export default function DishesTab() {
 
   const editing = dishes.find((d) => d.id === editId) ?? null;
 
+  async function createDish() {
+    const cleanName = newName.trim().replace(/\s+/g, ' ');
+    if (!cleanName || createLock.current || !cats.length) return;
+    createLock.current = true; setCreateBusy(true); setCreateMsg('');
+    try {
+      const s = adminSb();
+      const { data, error } = await s.from('dishes').insert({
+        category_id: cats[0].id, kind: 'dish', name: cleanName, status: 'needs_review',
+        note: null, sort_order: Math.max(0, ...dishes.map((d) => d.sort_order)) + 1,
+      }).select('id').single();
+      if (error) throw error;
+      setNewName(''); dropMenuCache(); await load(); setEditId(data.id);
+    } catch (e) { setCreateMsg(errText(e)); }
+    finally { createLock.current = false; setCreateBusy(false); }
+  }
+
+  async function deleteDish(id: string) {
+    const target = dishes.find((d) => d.id === id);
+    if (deleteLock.current || !target || !window.confirm(`Удалить блюдо «${target.name}»? Это действие нельзя отменить.`)) return;
+    deleteLock.current = true;
+    try {
+      const s = adminSb();
+      const { error } = await s.from('dishes').delete().eq('id', id);
+      if (error) { window.alert(errText(error)); return; }
+      if (target.photo_path) await s.storage.from(PHOTO_BUCKET).remove([target.photo_path]);
+      setEditId(null); dropMenuCache(); await load();
+    } finally { deleteLock.current = false; }
+  }
+
   if (err && !ready) return <p className="panel p-5 text-pink" role="alert">{err}</p>;
   if (!ready) return <p className="text-cream/70">Загружаю…</p>;
 
@@ -66,6 +100,7 @@ export default function DishesTab() {
         dish={editing} cats={cats} ings={ings} aliases={aliases}
         initial={byDish.get(editing.id) ?? []}
         onClose={() => setEditId(null)}
+        onDelete={() => deleteDish(editing.id)}
         onSaved={async () => { dropMenuCache(); await load(); }}
         onIngCreated={async () => { await load(); }}
         ingName={ingName}
@@ -75,6 +110,11 @@ export default function DishesTab() {
 
   return (
     <>
+      <div className="panel mb-5 flex flex-wrap gap-3 p-4">
+        <input className={field + ' max-w-md'} placeholder="Название нового блюда" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void createDish(); }} />
+        <button type="button" className="btn-primary" disabled={createBusy || !newName.trim() || !cats.length} onClick={() => void createDish()}>{createBusy ? 'Создаю…' : 'Добавить блюдо'}</button>
+        {createMsg && <p role="alert" className="w-full text-sm text-pink">{createMsg}</p>}
+      </div>
       <div className="grid gap-3 md:grid-cols-3">
         <input className={field} placeholder="Поиск по названию" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Поиск по названию" />
         <select className={field} value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Категория">
@@ -113,7 +153,7 @@ export default function DishesTab() {
 
 function DishEditor(props: {
   dish: Dish; cats: Cat[]; ings: Ing[]; aliases: Alias[]; initial: string[]; ingName: Map<string, string>;
-  onClose: () => void; onSaved: () => Promise<void>; onIngCreated: () => Promise<void>;
+  onClose: () => void; onDelete: () => Promise<void>; onSaved: () => Promise<void>; onIngCreated: () => Promise<void>;
 }) {
   const { dish, cats, ings, aliases, ingName } = props;
   const [name, setName] = useState(dish.name);
@@ -128,6 +168,7 @@ function DishEditor(props: {
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [localIngs, setLocalIngs] = useState<Ing[]>([]);
+  const busyRef = useRef(false);
 
   const all = useMemo(() => [...ings, ...localIngs.filter((x) => !ings.some((i) => i.id === x.id))], [ings, localIngs]);
   const nameOf = (id: string) => ingName.get(id) ?? all.find((i) => i.id === id)?.name ?? '???';
@@ -154,25 +195,33 @@ function DishEditor(props: {
   }
 
   function move(i: number, d: -1 | 1) {
-    const j = i + d; if (j < 0 || j >= list.length) return;
-    const a = [...list]; [a[i], a[j]] = [a[j], a[i]]; setList(a);
+    setList((current) => {
+      const j = i + d; if (j < 0 || j >= current.length) return current;
+      const next = [...current]; [next[i], next[j]] = [next[j], next[i]]; return next;
+    });
   }
 
   async function createIngredient() {
     const n = q.trim().replace(/\s+/g, ' ');
-    if (!n) return;
-    setBusy(true); setMsg(null);
-    const { data, error } = await adminSb().from('ingredients').insert({ name: n, origin: 'admin' }).select('id,name').single();
-    setBusy(false);
-    if (error) { setMsg({ ok: false, t: errText(error) }); return; }
-    setLocalIngs((p) => [...p, data as Ing]);
-    setList((p) => [...p, (data as Ing).id]); setQ('');
-    props.onIngCreated();
+    if (!n || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setMsg(null);
+    try {
+      const { data, error } = await adminSb().from('ingredients').insert({ name: n, origin: 'admin' }).select('id,name').single();
+      if (error) throw error;
+      setLocalIngs((p) => [...p, data as Ing]);
+      setList((p) => p.includes((data as Ing).id) ? p : [...p, (data as Ing).id]); setQ('');
+      await props.onIngCreated();
+    } catch (e) {
+      setMsg({ ok: false, t: errText(e) });
+    } finally {
+      busyRef.current = false; setBusy(false);
+    }
   }
 
   async function save() {
     if (!name.trim()) { setMsg({ ok: false, t: 'Название не может быть пустым.' }); return; }
-    setBusy(true); setMsg(null);
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setMsg(null);
     const s = adminSb();
     try {
       let newPhoto = photoPath;
@@ -216,7 +265,7 @@ function DishEditor(props: {
       setMsg({ ok: true, t: 'Сохранено.' });
     } catch (e) {
       setMsg({ ok: false, t: errText(e) });
-    } finally { setBusy(false); }
+    } finally { busyRef.current = false; setBusy(false); }
   }
 
   const shown = preview ?? photoUrl(photoPath);
@@ -271,7 +320,7 @@ function DishEditor(props: {
                 <span className="flex-1">{nameOf(id)}</span>
                 <button type="button" aria-label="Выше" className="min-h-[36px] min-w-[36px] rounded-lg border border-white/15 hover:border-teal" onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
                 <button type="button" aria-label="Ниже" className="min-h-[36px] min-w-[36px] rounded-lg border border-white/15 hover:border-teal" onClick={() => move(i, 1)} disabled={i === list.length - 1}>↓</button>
-                <button type="button" aria-label={`Убрать ${nameOf(id)}`} className="min-h-[36px] min-w-[36px] rounded-lg border border-pink/60 text-pink hover:bg-pink/10" onClick={() => setList(list.filter((x) => x !== id))}>✕</button>
+                <button type="button" aria-label={`Убрать ${nameOf(id)}`} className="min-h-[36px] min-w-[36px] rounded-lg border border-pink/60 text-pink hover:bg-pink/10" onClick={() => setList((current) => current.filter((x) => x !== id))}>✕</button>
               </li>
             ))}
           </ol>
@@ -280,7 +329,7 @@ function DishEditor(props: {
             {nq && (
               <ul className="mt-2 space-y-1">
                 {matches.map((i) => (
-                  <li key={i.id}><button type="button" className="w-full rounded-lg border border-white/10 px-3 py-2 text-left hover:border-teal" onClick={() => { setList([...list, i.id]); setQ(''); }}>+ {i.name}</button></li>
+                  <li key={i.id}><button type="button" className="w-full rounded-lg border border-white/10 px-3 py-2 text-left hover:border-teal" onClick={() => { setList((current) => current.includes(i.id) ? current : [...current, i.id]); setQ(''); }}>+ {i.name}</button></li>
                 ))}
                 {!exact && (
                   <li><button type="button" disabled={busy} className="w-full rounded-lg border border-sun/70 px-3 py-2 text-left text-sun hover:bg-sun/10" onClick={createIngredient}>Создать новый ингредиент «{q.trim()}»</button></li>
@@ -296,6 +345,7 @@ function DishEditor(props: {
 
       <div className="flex flex-wrap items-center gap-4">
         <button className="btn-primary" onClick={save} disabled={busy}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
+        <button type="button" className="btn-ghost !border-pink !text-pink" disabled={busy} onClick={() => void props.onDelete()}>Удалить блюдо</button>
         {msg && <p role="status" className={msg.ok ? 'text-teal' : 'text-pink'}>{msg.t}</p>}
       </div>
     </div>
