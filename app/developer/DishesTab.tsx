@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { adminSb, dropMenuCache, errText, PHOTO_BUCKET, photoUrl } from '@/lib/adminClient';
 import { norm } from '@/lib/menu';
 
@@ -28,6 +28,8 @@ export default function DishesTab() {
   const [newName, setNewName] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createMsg, setCreateMsg] = useState('');
+  const createLock = useRef(false);
+  const deleteLock = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -61,8 +63,8 @@ export default function DishesTab() {
 
   async function createDish() {
     const cleanName = newName.trim().replace(/\s+/g, ' ');
-    if (!cleanName || createBusy || !cats.length) return;
-    setCreateBusy(true); setCreateMsg('');
+    if (!cleanName || createLock.current || !cats.length) return;
+    createLock.current = true; setCreateBusy(true); setCreateMsg('');
     try {
       const s = adminSb();
       const { data, error } = await s.from('dishes').insert({
@@ -72,17 +74,20 @@ export default function DishesTab() {
       if (error) throw error;
       setNewName(''); dropMenuCache(); await load(); setEditId(data.id);
     } catch (e) { setCreateMsg(errText(e)); }
-    finally { setCreateBusy(false); }
+    finally { createLock.current = false; setCreateBusy(false); }
   }
 
   async function deleteDish(id: string) {
     const target = dishes.find((d) => d.id === id);
-    if (!target || !window.confirm(`Удалить блюдо «${target.name}»? Это действие нельзя отменить.`)) return;
-    const s = adminSb();
-    const { error } = await s.from('dishes').delete().eq('id', id);
-    if (error) { window.alert(errText(error)); return; }
-    if (target.photo_path) await s.storage.from(PHOTO_BUCKET).remove([target.photo_path]);
-    setEditId(null); dropMenuCache(); await load();
+    if (deleteLock.current || !target || !window.confirm(`Удалить блюдо «${target.name}»? Это действие нельзя отменить.`)) return;
+    deleteLock.current = true;
+    try {
+      const s = adminSb();
+      const { error } = await s.from('dishes').delete().eq('id', id);
+      if (error) { window.alert(errText(error)); return; }
+      if (target.photo_path) await s.storage.from(PHOTO_BUCKET).remove([target.photo_path]);
+      setEditId(null); dropMenuCache(); await load();
+    } finally { deleteLock.current = false; }
   }
 
   if (err && !ready) return <p className="panel p-5 text-pink" role="alert">{err}</p>;
@@ -163,6 +168,7 @@ function DishEditor(props: {
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [localIngs, setLocalIngs] = useState<Ing[]>([]);
+  const busyRef = useRef(false);
 
   const all = useMemo(() => [...ings, ...localIngs.filter((x) => !ings.some((i) => i.id === x.id))], [ings, localIngs]);
   const nameOf = (id: string) => ingName.get(id) ?? all.find((i) => i.id === id)?.name ?? '???';
@@ -195,10 +201,10 @@ function DishEditor(props: {
 
   async function createIngredient() {
     const n = q.trim().replace(/\s+/g, ' ');
-    if (!n) return;
-    setBusy(true); setMsg(null);
+    if (!n || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setMsg(null);
     const { data, error } = await adminSb().from('ingredients').insert({ name: n, origin: 'admin' }).select('id,name').single();
-    setBusy(false);
+    setBusy(false); busyRef.current = false;
     if (error) { setMsg({ ok: false, t: errText(error) }); return; }
     setLocalIngs((p) => [...p, data as Ing]);
     setList((p) => [...p, (data as Ing).id]); setQ('');
@@ -207,7 +213,8 @@ function DishEditor(props: {
 
   async function save() {
     if (!name.trim()) { setMsg({ ok: false, t: 'Название не может быть пустым.' }); return; }
-    setBusy(true); setMsg(null);
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setMsg(null);
     const s = adminSb();
     try {
       let newPhoto = photoPath;
@@ -251,7 +258,7 @@ function DishEditor(props: {
       setMsg({ ok: true, t: 'Сохранено.' });
     } catch (e) {
       setMsg({ ok: false, t: errText(e) });
-    } finally { setBusy(false); }
+    } finally { busyRef.current = false; setBusy(false); }
   }
 
   const shown = preview ?? photoUrl(photoPath);
