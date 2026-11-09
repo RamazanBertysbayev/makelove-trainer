@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { getMenu, shuffle, trainable, type Dish, type Menu } from '@/lib/menu';
 import { configured, getMyProfile, type Profile } from '@/lib/supabase';
@@ -21,6 +21,10 @@ export default function Cards() {
   const [flipped, setFlipped] = useState(false);
   const [res, setRes] = useState<Res[]>([]);
   const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [answering, setAnswering] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const answerLock = useRef(false);
+  const beginLock = useRef(false);
 
   useEffect(() => {
     if (!configured) { setErr('Сайт не подключён к базе (нет ключей Supabase).'); return; }
@@ -34,22 +38,48 @@ export default function Cards() {
   const photoUrl = (p: string) => `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/dish-photos/${p}`;
 
   async function begin(list: Dish[]) {
-    setWarn(''); setRes([]); setIdx(0); setFlipped(false); setDeck(list); setAttemptId(null); setPhase('play');
-    if (!profile) return;
-    try { setAttemptId(await startAttempt(profile.id, 'flashcards', cat, null, false, list.length)); }
-    catch (e) { setWarn('Прогресс не сохраняется: ' + (e as Error).message); }
+    if (beginLock.current) return;
+    beginLock.current = true;
+    setStarting(true);
+    setWarn(''); setRes([]); setIdx(0); setFlipped(false); setDeck(list); setAttemptId(null);
+    answerLock.current = false; setAnswering(false);
+    try {
+      if (profile) {
+        try { setAttemptId(await startAttempt(profile.id, 'flashcards', cat, null, false, list.length)); }
+        catch (e) { setWarn('Прогресс не сохраняется: ' + (e as Error).message); }
+      }
+      setPhase('play');
+    } finally {
+      setStarting(false);
+      beginLock.current = false;
+    }
   }
   async function answer(outcome: Outcome) {
+    if (answerLock.current || phase !== 'play' || !deck[idx]) return;
+    answerLock.current = true;
+    setAnswering(true);
     const dish = deck[idx];
     const all = [...res, { dish, outcome }];
     setRes(all);
-    if (profile && attemptId) {
-      try { await saveAnswer(profile.id, attemptId, [dish.id], 'card', outcome, dish.ingredients.map((i) => names.get(i)), outcome); }
-      catch (e) { setWarn('Не удалось сохранить ответ: ' + (e as Error).message); }
+    try {
+      if (profile && attemptId) {
+        try { await saveAnswer(profile.id, attemptId, [dish.id], 'card', outcome, dish.ingredients.map((i) => names.get(i)), outcome); }
+        catch (e) { setWarn('Не удалось сохранить ответ: ' + (e as Error).message); }
+      }
+      if (idx + 1 < deck.length) {
+        setIdx((current) => current + 1);
+        setFlipped(false);
+        return;
+      }
+      if (profile && attemptId) {
+        try { await finishAttempt(attemptId, all.filter((r) => r.outcome === 'right').length); }
+        catch (e) { setWarn('Не удалось сохранить результат: ' + (e as Error).message); }
+      }
+      setPhase('done');
+    } finally {
+      answerLock.current = false;
+      setAnswering(false);
     }
-    if (idx + 1 < deck.length) { setIdx(idx + 1); setFlipped(false); return; }
-    setPhase('done');
-    if (profile && attemptId) { try { await finishAttempt(attemptId, all.filter((r) => r.outcome === 'right').length); } catch (e) { setWarn('Не удалось сохранить результат: ' + (e as Error).message); } }
   }
 
   if (err) return <main className="mx-auto max-w-3xl px-5 py-10"><p className="panel p-5 text-pink" role="alert">{err}</p></main>;
@@ -70,7 +100,7 @@ export default function Cards() {
           <select className={sel} value={count} onChange={(e) => setCount(Number(e.target.value))}>{[5, 10, 20, 50].map((n) => (<option key={n} value={n}>{n}</option>))}</select>
         </label>
         <p className="text-sm text-cream/60">Доступно блюд: {available.length}.</p>
-        <button className="btn-primary disabled:opacity-40" disabled={!available.length} onClick={() => begin(shuffle(available).slice(0, count))}>Начать</button>
+        <button className="btn-primary disabled:opacity-40" disabled={!available.length || starting} onClick={() => begin(shuffle(available).slice(0, count))}>Начать</button>
       </div>
     </main>
   );
@@ -98,7 +128,7 @@ export default function Cards() {
   return (
     <main className="mx-auto max-w-xl px-5 pb-24">
       <p className="py-6 text-sm text-cream/70">Карточка {idx + 1} из {deck.length}</p>
-      <button type="button" onClick={() => setFlipped(!flipped)} className="panel block min-h-[320px] w-full p-8 text-left" aria-label="Перевернуть карточку">
+      <button type="button" onClick={() => setFlipped((current) => !current)} className="panel block min-h-[320px] w-full p-8 text-left" aria-label="Перевернуть карточку">
         {!flipped ? (
           <>
             <p className="text-xs font-semibold uppercase tracking-wide text-teal">{cats.get(dish.category_id)}</p>
@@ -115,9 +145,9 @@ export default function Cards() {
       </button>
       {flipped ? (
         <div className="mt-5 grid grid-cols-3 gap-3">
-          <button className="btn-primary px-2" onClick={() => answer('right')}>Знаю</button>
-          <button className="btn-ghost px-2" onClick={() => answer('review')}>Нужно повторить</button>
-          <button className="btn-ghost px-2 !border-pink !text-pink" onClick={() => answer('wrong')}>Не знаю</button>
+          <button className="btn-primary px-2" disabled={answering} onClick={() => answer('right')}>Знаю</button>
+          <button className="btn-ghost px-2" disabled={answering} onClick={() => answer('review')}>Нужно повторить</button>
+          <button className="btn-ghost px-2 !border-pink !text-pink" disabled={answering} onClick={() => answer('wrong')}>Не знаю</button>
         </div>
       ) : <button className="btn-ghost mt-5 w-full" onClick={() => setFlipped(true)}>Показать состав</button>}
       {warn && <p className="mt-4 text-sun">{warn}</p>}
