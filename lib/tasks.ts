@@ -1,4 +1,5 @@
 import { norm, shuffle, trainable, type Dish, type Menu } from './menu';
+import type { CustomQuestion } from './questions';
 
 // Все задания строятся ТОЛЬКО из реальных ингредиентов и блюд базы:
 // неверные варианты берутся из составов других подтверждённых блюд, ничего не выдумывается.
@@ -6,7 +7,7 @@ import { norm, shuffle, trainable, type Dish, type Menu } from './menu';
 export type Kind = 'assemble' | 'quiz' | 'find_error' | 'compare';
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export type Opt = { id: string; label: string };
-export type QType = 'pick_composition' | 'which_in' | 'missing' | 'extra' | 'which_dishes' | 'diff';
+export type QType = 'pick_composition' | 'which_in' | 'missing' | 'extra' | 'which_dishes' | 'diff' | 'custom';
 export type ErrType = 'extra' | 'missing' | 'replaced';
 export type Side = 'both' | 'a' | 'b';
 
@@ -163,12 +164,12 @@ function compareTask(c: Ctx, d: Dish): Task | null {
   return { kind: 'compare', dishIds: [d.id, o.id], rows, truth };
 }
 
-const QTYPES: Record<Difficulty, QType[]> = {
+const QTYPES: Record<Difficulty, Exclude<QType, 'custom'>[]> = {
   easy: ['which_in', 'which_dishes', 'pick_composition'],
   medium: ['which_in', 'which_dishes', 'pick_composition', 'missing', 'extra', 'diff'],
   hard: ['pick_composition', 'missing', 'extra', 'diff', 'which_dishes'],
 };
-const QB: Record<QType, (c: Ctx, d: Dish) => Task | null> = { which_in: whichIn, missing, extra, which_dishes: whichDishes, pick_composition: pickComposition, diff: diffTask };
+const QB: Record<Exclude<QType, 'custom'>, (c: Ctx, d: Dish) => Task | null> = { which_in: whichIn, missing, extra, which_dishes: whichDishes, pick_composition: pickComposition, diff: diffTask };
 
 export function build(c: Ctx, kind: Kind, d: Dish): Task | null {
   if (kind === 'assemble') return { kind, dishIds: [d.id] };
@@ -178,13 +179,30 @@ export function build(c: Ctx, kind: Kind, d: Dish): Task | null {
   return null;
 }
 
-export function makeTasks(menu: Menu, o: { kinds: Kind[]; count: number; categoryId: string; difficulty: Difficulty }): Task[] {
+function customTask(q: CustomQuestion): Task {
+  const right = q.options.find((o) => o.is_correct)!;
+  return { kind: 'quiz', qtype: 'custom', dishIds: [q.dish_id], prompt: q.prompt, options: q.options.map((o) => ({ id: o.id, label: o.label })), correct: right.id, explain: q.explanation || `Правильный ответ: ${right.label}.` };
+}
+
+export function makeTasks(menu: Menu, o: { kinds: Kind[]; count: number; categoryId: string; difficulty: Difficulty; custom?: CustomQuestion[] }): Task[] {
   const c = new Ctx(menu, o.difficulty);
   const subjects = shuffle(c.pool.filter((d) => o.categoryId === 'all' || d.category_id === o.categoryId));
   const out: Task[] = [];
   for (const d of subjects) {
     if (out.length >= o.count) break;
     for (const kind of shuffle(o.kinds)) { const t = build(c, kind, d); if (t) { out.push(t); break; } }
+  }
+  // Свои вопросы из админки: в режимах с квизом часть обычных квизов заменяется ими (примерно каждый второй).
+  if (o.kinds.includes('quiz') && o.custom?.length) {
+    const queue = shuffle(o.custom.filter((q) => {
+      const d = c.byId.get(q.dish_id);
+      return d && (o.categoryId === 'all' || d.category_id === o.categoryId);
+    }));
+    for (let i = 0; i < out.length && queue.length; i++) {
+      if (out[i].kind === 'quiz' && Math.random() < 0.5) out[i] = customTask(queue.pop()!);
+    }
+    // если обычных заданий не хватило до нужного числа — добираем своими
+    while (out.length < o.count && queue.length) out.push(customTask(queue.pop()!));
   }
   return out;
 }

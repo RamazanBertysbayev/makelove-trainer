@@ -1,9 +1,10 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { getMenu, trainable, type Menu } from '@/lib/menu';
 import { configured, getMyProfile, type Profile } from '@/lib/supabase';
 import { Ctx, hintFor, makeTasks, type Difficulty, type Kind, type Task } from '@/lib/tasks';
+import { getCustomQuestions, type CustomQuestion } from '@/lib/questions';
 import { finishAttempt, saveAnswer, startAttempt, type Mode } from '@/lib/progress';
 import { AssembleView, CompareView, FindErrorView, QuizView, type Answer } from './views';
 
@@ -18,6 +19,7 @@ export default function Trainer({ title, kinds, mode, chooseKinds = false }: { t
   const [warn, setWarn] = useState('');
   const [menu, setMenu] = useState<Menu | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [custom, setCustom] = useState<CustomQuestion[]>([]);
   const [cat, setCat] = useState('all');
   const [count, setCount] = useState(10);
   const [diff, setDiff] = useState<Difficulty>('medium');
@@ -29,11 +31,14 @@ export default function Trainer({ title, kinds, mode, chooseKinds = false }: { t
   const [results, setResults] = useState<{ task: Task; ok: boolean }[]>([]);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
+  const answerLock = useRef(false);
+  const nextLock = useRef(false);
+  const beginLock = useRef(false);
 
   useEffect(() => {
     if (!configured) { setErr('Сайт не подключён к базе (нет ключей Supabase).'); return; }
-    Promise.all([getMenu(), getMyProfile()])
-      .then(([m, p]) => { setMenu(m); setProfile(p); setPhase('setup'); })
+    Promise.all([getMenu(), getMyProfile(), getCustomQuestions()])
+      .then(([m, p, cq]) => { setMenu(m); setProfile(p); setCustom(cq); setPhase('setup'); })
       .catch((e) => setErr(e.message || 'Не удалось загрузить данные'));
   }, []);
 
@@ -43,32 +48,50 @@ export default function Trainer({ title, kinds, mode, chooseKinds = false }: { t
   const showDiff = kinds.some((k) => k !== 'assemble') || chooseKinds;
 
   async function begin(list: Task[]) {
-    setWarn(''); setResults([]); setIdx(0); setAnswered(false); setShowHint(false); setTasks(list); setAttemptId(null); setPhase('play');
-    if (!profile) return;
-    try { setAttemptId(await startAttempt(profile.id, mode, cat, showDiff ? diff : null, exam, list.length)); }
-    catch (e) { setWarn('Прогресс не сохраняется: ' + (e as Error).message); }
+    if (beginLock.current) return;
+    beginLock.current = true;
+    setWarn(''); setResults([]); setIdx(0); setAnswered(false); setShowHint(false); setTasks(list); setAttemptId(null);
+    answerLock.current = false; nextLock.current = false;
+    try {
+      if (profile) {
+        try { setAttemptId(await startAttempt(profile.id, mode, cat, showDiff ? diff : null, exam, list.length)); }
+        catch (e) { setWarn('Прогресс не сохраняется: ' + (e as Error).message); }
+      }
+      setPhase('play');
+    } finally { beginLock.current = false; }
   }
   const start = () => {
-    const list = makeTasks(menu!, { kinds: chosenKinds, count, categoryId: cat, difficulty: diff });
+    if (beginLock.current) return;
+    const list = makeTasks(menu!, { kinds: chosenKinds, count, categoryId: cat, difficulty: diff, custom });
     if (list.length === 0) { setWarn('Не удалось составить задания для этой категории.'); return; }
-    begin(list);
+    void begin(list);
   };
 
   async function onAnswer(a: Answer) {
+    if (answerLock.current || answered || phase !== 'play') return;
     const task = tasks[idx];
+    if (!task) return;
+    answerLock.current = true;
     setAnswered(true);
     setResults((r) => [...r, { task, ok: a.ok }]);
-    if (!profile || !attemptId) return;
-    try { await saveAnswer(profile.id, attemptId, task.dishIds, task.kind === 'quiz' ? task.qtype : task.kind, a.ok ? 'right' : 'wrong', a.expected, a.given); }
-    catch (e) { setWarn('Не удалось сохранить ответ: ' + (e as Error).message); }
+    try {
+      if (!profile || !attemptId) return;
+      await saveAnswer(profile.id, attemptId, task.dishIds, task.kind === 'quiz' ? task.qtype : task.kind, a.ok ? 'right' : 'wrong', a.expected, a.given);
+    } catch (e) { setWarn('Не удалось сохранить ответ: ' + (e as Error).message); }
   }
   async function next() {
-    if (idx + 1 < tasks.length) { setIdx(idx + 1); setAnswered(false); setShowHint(false); return; }
-    setPhase('done');
-    if (profile && attemptId) {
-      try { await finishAttempt(attemptId, results.filter((r) => r.ok).length); }
-      catch (e) { setWarn('Не удалось сохранить результат: ' + (e as Error).message); }
-    }
+    if (nextLock.current || !answered) return;
+    nextLock.current = true;
+    try {
+      if (idx + 1 < tasks.length) {
+        setIdx((current) => current + 1); setAnswered(false); setShowHint(false); answerLock.current = false; return;
+      }
+      setPhase('done');
+      if (profile && attemptId) {
+        try { await finishAttempt(attemptId, results.filter((r) => r.ok).length); }
+        catch (e) { setWarn('Не удалось сохранить результат: ' + (e as Error).message); }
+      }
+    } finally { nextLock.current = false; }
   }
 
   if (err) return <main className="mx-auto max-w-3xl px-5 py-10"><p className="panel p-5 text-pink" role="alert">{err}</p></main>;

@@ -4,12 +4,13 @@ import Link from 'next/link';
 import { adminConfigured, adminSb, checkIsAdmin, errText } from '@/lib/adminClient';
 import DishesTab from './DishesTab';
 import IngredientsTab from './IngredientsTab';
+import QuestionsTab from './QuestionsTab';
 
 type Phase = 'loading' | 'login' | 'denied' | 'ok';
 
 export default function AdminApp() {
   const [phase, setPhase] = useState<Phase>('loading');
-  const [tab, setTab] = useState<'dishes' | 'ingredients'>('dishes');
+  const [tab, setTab] = useState<'dishes' | 'ingredients' | 'questions'>('dishes');
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [busy, setBusy] = useState(false);
@@ -86,12 +87,12 @@ export default function AdminApp() {
         <button className="btn-ghost min-h-[40px] px-4 text-sm" onClick={logout}>Выйти</button>
       </div>
       <div role="tablist" className="mb-6 flex gap-2">
-        {([['dishes', 'Блюда'], ['ingredients', 'Ингредиенты']] as const).map(([k, label]) => (
+        {([['dishes', 'Блюда'], ['ingredients', 'Ингредиенты'], ['questions', 'Вопросы']] as const).map(([k, label]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`min-h-[44px] rounded-xl border-2 px-5 font-bold ${tab === k ? 'border-pink bg-pink text-night' : 'border-white/20 text-cream/80 hover:border-teal'}`}>{label}</button>
         ))}
       </div>
-      {tab === 'dishes' ? <DishesTab /> : <IngredientsTab />}
+      {tab === 'dishes' ? <DishesTab /> : tab === 'ingredients' ? <IngredientsTab /> : <QuestionsTab />}
     </main>
   );
 }
