@@ -60,7 +60,7 @@ export default function DishesTab() {
   const editing = dishes.find((d) => d.id === editId) ?? null;
 
   async function createDish() {
-    const cleanName = newName.trim().replace(/\\s+/g, ' ');
+    const cleanName = newName.trim().replace(/\s+/g, ' ');
     if (!cleanName || createBusy || !cats.length) return;
     setCreateBusy(true); setCreateMsg('');
     try {
