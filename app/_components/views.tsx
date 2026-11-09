@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { shuffle } from '@/lib/menu';
 import type { Ctx, ErrType, Side, Task } from '@/lib/tasks';
 
@@ -15,18 +15,21 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
   const [picked, setPicked] = useState<string[]>([]);
   const [filter, setFilter] = useState('');
   const [res, setRes] = useState<{ ok: boolean; missing: string[]; extra: string[] } | null>(null);
+  const checkLock = useRef(false);
   const rest = useMemo(() => {
     const f = filter.trim().toLowerCase().replace(/ё/g, 'е');
     return c.menu.ingredients.filter((i) => !picked.includes(i.id) && (!f || i.name.toLowerCase().replace(/ё/g, 'е').includes(f) || i.aliases.some((a) => a.toLowerCase().includes(f))));
   }, [c, picked, filter]);
 
   function check() {
+    if (checkLock.current || res) return;
+    checkLock.current = true;
     const right = new Set(dish.ingredients), got = new Set(picked);
     const missing = dish.ingredients.filter((i) => !got.has(i)).map(c.label);
     const extra = picked.filter((i) => !right.has(i)).map(c.label);
     const ok = !missing.length && !extra.length;   // только состав, порядок не важен
     setRes({ ok, missing, extra });
-    onAnswer({ ok, given: picked.map(c.label), expected: dish.ingredients.map(c.label) });
+    if (ok) onAnswer({ ok, given: picked.map(c.label), expected: dish.ingredients.map(c.label) });
   }
   return (
     <>
@@ -34,11 +37,11 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
       <section className="panel mt-6 p-5" aria-label="Выбранные ингредиенты">
         <p className="text-sm text-cream/60">Выбрано: {picked.length}</p>
         <ul className="mt-3 flex min-h-[48px] flex-wrap gap-2">
-          {picked.map((id) => (<li key={id}><button type="button" disabled={!!res} onClick={() => setPicked(picked.filter((x) => x !== id))} className={`${chip} border-2 border-pink bg-pink/10 font-semibold text-cream disabled:opacity-80`} aria-label={`Убрать ${c.label(id)}`}>{c.label(id)} ✕</button></li>))}
+          {picked.map((id) => (<li key={id}><button type="button" disabled={!!res} onClick={() => setPicked((current) => current.filter((x) => x !== id))} className={`${chip} border-2 border-pink bg-pink/10 font-semibold text-cream disabled:opacity-80`} aria-label={`Убрать ${c.label(id)}`}>{c.label(id)} ✕</button></li>))}
           {!picked.length && <li className="text-cream/50">Нажимай на ингредиенты ниже</li>}
         </ul>
         <div className="mt-4 flex flex-wrap gap-3">
-          <button className="btn-ghost" disabled={!!res || !picked.length} onClick={() => setPicked(picked.slice(0, -1))}>Отменить последний</button>
+          <button className="btn-ghost" disabled={!!res || !picked.length} onClick={() => setPicked((current) => current.slice(0, -1))}>Отменить последний</button>
           <button className="btn-ghost" disabled={!!res || !picked.length} onClick={() => setPicked([])}>Начать заново</button>
           <button className="btn-primary disabled:opacity-40" disabled={!!res || !picked.length} onClick={check}>Проверить</button>
         </div>
@@ -49,13 +52,14 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
           {res.missing.length > 0 && <p className="mt-2">Не хватает: <b>{res.missing.join(', ')}</b></p>}
           {res.extra.length > 0 && <p className="mt-2">Лишнее: <b>{res.extra.join(', ')}</b></p>}
           <p className="mt-2 text-cream/80">Правильный состав: {c.list(dish.ingredients)}</p>
+          {!res.ok && <button type="button" className="btn-primary mt-4" onClick={() => { checkLock.current = false; setPicked([]); setFilter(''); setRes(null); }}>Начать заново</button>}
         </section>
       )}
       {!res && (
         <section className="mt-6" aria-label="Ингредиенты">
           <input className="min-h-[48px] w-full rounded-xl border border-white/15 bg-plum/70 px-4 text-cream placeholder:text-cream/40" placeholder="Найти ингредиент" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Найти ингредиент" />
           <ul className="mt-3 flex max-h-[45vh] flex-wrap gap-2 overflow-y-auto pr-1">
-            {rest.map((i) => (<li key={i.id}><button type="button" onClick={() => setPicked([...picked, i.id])} className={`${chip} border-teal/60 text-teal hover:bg-teal/10`}>{i.name}</button></li>))}
+            {rest.map((i) => (<li key={i.id}><button type="button" onClick={() => setPicked((current) => current.includes(i.id) ? current : [...current, i.id])} className={`${chip} border-teal/60 text-teal hover:bg-teal/10`}>{i.name}</button></li>))}
           </ul>
         </section>
       )}
@@ -66,9 +70,11 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
 // ---------- КВИЗ ----------
 export function QuizView({ task, c, onAnswer }: P<'quiz'>) {
   const [chosen, setChosen] = useState<string | null>(null);
+  const chooseLock = useRef(false);
   const done = chosen !== null;
   function choose(id: string) {
-    if (done) return;
+    if (done || chooseLock.current) return;
+    chooseLock.current = true;
     setChosen(id);
     const lab = (x: string) => task.options.find((o) => o.id === x)?.label;
     onAnswer({ ok: id === task.correct, given: lab(id), expected: lab(task.correct) });
@@ -101,15 +107,20 @@ export function FindErrorView({ task, c, onAnswer }: P<'find_error'>) {
   const [type, setType] = useState<ErrType | null>(null);
   const [target, setTarget] = useState<string | null>(null);
   const [done, setDone] = useState<boolean | null>(null);
+  const typeLock = useRef(false);
+  const targetLock = useRef(false);
   const given = (t: ErrType, x?: string) => ({ type: t, target: x ? c.label(x) : null });
   const expected = { type: task.etype, target: c.label(task.target) };
 
   function chooseType(t: ErrType) {
+    if (typeLock.current) return;
+    typeLock.current = true;
     setType(t);
     if (t !== task.etype) { setDone(false); onAnswer({ ok: false, given: given(t), expected }); }
   }
   function chooseTarget(id: string) {
-    if (done !== null) return;
+    if (done !== null || targetLock.current) return;
+    targetLock.current = true;
     setTarget(id);
     const ok = id === task.target;
     setDone(ok); onAnswer({ ok, given: given(type!, id), expected });
@@ -151,9 +162,12 @@ export function CompareView({ task, c, onAnswer }: P<'compare'>) {
   const [a, b] = task.dishIds.map((id) => c.byId.get(id)!);
   const [ans, setAns] = useState<Record<string, Side>>({});
   const [res, setRes] = useState<boolean | null>(null);
+  const checkLock = useRef(false);
   const rows = useMemo(() => task.rows, [task]);
   const ready = rows.every((r) => ans[r]);
   function check() {
+    if (checkLock.current || res !== null) return;
+    checkLock.current = true;
     const wrong = rows.filter((r) => ans[r] !== task.truth[r]);
     const ok = wrong.length === 0;
     setRes(ok);
