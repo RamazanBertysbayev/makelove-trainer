@@ -25,6 +25,9 @@ export default function DishesTab() {
   const [cat, setCat] = useState('all');
   const [st, setSt] = useState('all');
   const [editId, setEditId] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createMsg, setCreateMsg] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -56,6 +59,32 @@ export default function DishesTab() {
 
   const editing = dishes.find((d) => d.id === editId) ?? null;
 
+  async function createDish() {
+    const cleanName = newName.trim().replace(/\\s+/g, ' ');
+    if (!cleanName || createBusy || !cats.length) return;
+    setCreateBusy(true); setCreateMsg('');
+    try {
+      const s = adminSb();
+      const { data, error } = await s.from('dishes').insert({
+        category_id: cats[0].id, kind: 'dish', name: cleanName, status: 'needs_review',
+        note: null, sort_order: Math.max(0, ...dishes.map((d) => d.sort_order)) + 1,
+      }).select('id').single();
+      if (error) throw error;
+      setNewName(''); dropMenuCache(); await load(); setEditId(data.id);
+    } catch (e) { setCreateMsg(errText(e)); }
+    finally { setCreateBusy(false); }
+  }
+
+  async function deleteDish(id: string) {
+    const target = dishes.find((d) => d.id === id);
+    if (!target || !window.confirm(`Удалить блюдо «${target.name}»? Это действие нельзя отменить.`)) return;
+    const s = adminSb();
+    const { error } = await s.from('dishes').delete().eq('id', id);
+    if (error) { window.alert(errText(error)); return; }
+    if (target.photo_path) await s.storage.from(PHOTO_BUCKET).remove([target.photo_path]);
+    setEditId(null); dropMenuCache(); await load();
+  }
+
   if (err && !ready) return <p className="panel p-5 text-pink" role="alert">{err}</p>;
   if (!ready) return <p className="text-cream/70">Загружаю…</p>;
 
@@ -66,6 +95,7 @@ export default function DishesTab() {
         dish={editing} cats={cats} ings={ings} aliases={aliases}
         initial={byDish.get(editing.id) ?? []}
         onClose={() => setEditId(null)}
+        onDelete={() => deleteDish(editing.id)}
         onSaved={async () => { dropMenuCache(); await load(); }}
         onIngCreated={async () => { await load(); }}
         ingName={ingName}
@@ -75,6 +105,11 @@ export default function DishesTab() {
 
   return (
     <>
+      <div className="panel mb-5 flex flex-wrap gap-3 p-4">
+        <input className={field + ' max-w-md'} placeholder="Название нового блюда" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void createDish(); }} />
+        <button type="button" className="btn-primary" disabled={createBusy || !newName.trim() || !cats.length} onClick={() => void createDish()}>{createBusy ? 'Создаю…' : 'Добавить блюдо'}</button>
+        {createMsg && <p role="alert" className="w-full text-sm text-pink">{createMsg}</p>}
+      </div>
       <div className="grid gap-3 md:grid-cols-3">
         <input className={field} placeholder="Поиск по названию" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Поиск по названию" />
         <select className={field} value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Категория">
@@ -113,7 +148,7 @@ export default function DishesTab() {
 
 function DishEditor(props: {
   dish: Dish; cats: Cat[]; ings: Ing[]; aliases: Alias[]; initial: string[]; ingName: Map<string, string>;
-  onClose: () => void; onSaved: () => Promise<void>; onIngCreated: () => Promise<void>;
+  onClose: () => void; onDelete: () => Promise<void>; onSaved: () => Promise<void>; onIngCreated: () => Promise<void>;
 }) {
   const { dish, cats, ings, aliases, ingName } = props;
   const [name, setName] = useState(dish.name);
@@ -296,6 +331,7 @@ function DishEditor(props: {
 
       <div className="flex flex-wrap items-center gap-4">
         <button className="btn-primary" onClick={save} disabled={busy}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
+        <button type="button" className="btn-ghost !border-pink !text-pink" disabled={busy} onClick={() => void props.onDelete()}>Удалить блюдо</button>
         {msg && <p role="status" className={msg.ok ? 'text-teal' : 'text-pink'}>{msg.t}</p>}
       </div>
     </div>
