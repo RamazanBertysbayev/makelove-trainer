@@ -16,6 +16,7 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
   const [filter, setFilter] = useState('');
   const [res, setRes] = useState<{ ok: boolean; missing: string[]; extra: string[] } | null>(null);
   const checkLock = useRef(false);
+  const reported = useRef(false);   // результат задания засчитывается один раз, повторные попытки не считаются
   const rest = useMemo(() => {
     const f = filter.trim().toLowerCase().replace(/ё/g, 'е');
     return c.menu.ingredients.filter((i) => !picked.includes(i.id) && (!f || i.name.toLowerCase().replace(/ё/g, 'е').includes(f) || i.aliases.some((a) => a.toLowerCase().includes(f))));
@@ -29,7 +30,10 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
     const extra = picked.filter((i) => !right.has(i)).map(c.label);
     const ok = !missing.length && !extra.length;   // только состав, порядок не важен
     setRes({ ok, missing, extra });
-    if (ok) onAnswer({ ok, given: picked.map(c.label), expected: dish.ingredients.map(c.label) });
+    if (!reported.current) {
+      reported.current = true;
+      onAnswer({ ok, given: picked.map(c.label), expected: dish.ingredients.map(c.label) });
+    }
   }
   return (
     <>
@@ -52,7 +56,7 @@ export function AssembleView({ task, c, onAnswer }: P<'assemble'>) {
           {res.missing.length > 0 && <p className="mt-2">Не хватает: <b>{res.missing.join(', ')}</b></p>}
           {res.extra.length > 0 && <p className="mt-2">Лишнее: <b>{res.extra.join(', ')}</b></p>}
           <p className="mt-2 text-cream/80">Правильный состав: {c.list(dish.ingredients)}</p>
-          {!res.ok && <button type="button" className="btn-primary mt-4" onClick={() => { checkLock.current = false; setPicked([]); setFilter(''); setRes(null); }}>Начать заново</button>}
+          {!res.ok && <button type="button" className="btn-primary mt-4" onClick={() => { checkLock.current = false; setPicked([]); setFilter(''); setRes(null); }}>Попробовать ещё раз</button>}
         </section>
       )}
       {!res && (
